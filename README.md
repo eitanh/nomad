@@ -18,6 +18,10 @@ A **real-time intraday auto-trading** application for US equities, built around 
 - [`docs/REUSE.md`](docs/REUSE.md) — exact files to copy/port from the `stocks` repo.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — phased plan (gateway connect → paper MVP → backtest → live).
 
+## Key facts
+- **Live data + execution both via IBKR** (`ib_insync`): real-time ticks (`reqTickByTickData`) over the same gateway connection that places orders. FMP has no tick socket, so it is not the live feed.
+- **Strategy is new + intraday** (price-action) — the `stocks` fundamentals/swing rules are not ported.
+
 ## Open decisions (resolve before P1 coding)
 1. First-milestone scope: connect+monitor-only vs. full auto-paper MVP vs. semi-auto (human approves).
-2. Starting strategy: port the `stocks` swing rules as a baseline vs. a new intraday strategy vs. one simple validation rule.
+2. Which intraday strategy to build first (opening-range breakout / VWAP reversion / momentum / …) and the data resolution (raw ticks vs 5s/1m bars built from ticks).

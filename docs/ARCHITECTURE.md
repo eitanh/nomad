@@ -4,10 +4,10 @@ Recommended topology: **one image, two processes** (mirrors `stocks`' backend+co
 
 ```
                  ┌─────────────────────────────────────────────┐
-   FMP (HTTPS) ─▶ │ nomad-engine  (python -m app.engine)         │
-   real-time     │   feed → strategy → RISK GATE → order router │──TCP──▶ ibgw:4002 ──▶ IBKR (paper)
-   quotes        │   ↑ reconciler (on connect + timer)          │         (ib-gateway-docker + IBC)
-                 └───────────────┬─────────────────────────────┘
+                 │ nomad-engine  (python -m app.engine)         │   ticks + orders over ONE IBKR conn
+                 │   feed → strategy → RISK GATE → order router │──TCP──▶ ibgw:4002 ──▶ IBKR (paper)
+                 │   ↑ reconciler (on connect + timer)          │   reqTickByTickData / placeOrder
+                 └───────────────┬─────────────────────────────┘   (ib-gateway-docker + IBC)
                                  │ writes state (orders/fills/positions/pnl/signals)
                                  ▼
                           ┌────────────┐
@@ -25,8 +25,8 @@ Recommended topology: **one image, two processes** (mirrors `stocks`' backend+co
 
 ### `nomad-engine` — the only thing that trades
 Single asyncio loop (structural template: `stocks` `backend/app/collector.py`) hosting cooperating in-process tasks:
-- **feed** (`app/feed.py`) — poll FMP `get_quote()` (real-time) into an in-memory `dict[ticker]→Quote`; optionally cross-check with IBKR `reqRealTimeBars`/`reqTickByTickData`. Market-hours-gated (reuse `collector._market_open`).
-- **strategy** (`app/strategy.py`) — pure signal functions (ported from `stocks` `analysis.ts`) → intents `{ticker, side, strength}`.
+- **feed** (`app/feed.py`) — subscribe to **IBKR real-time ticks** (`reqTickByTickData`, and/or `reqRealTimeBars`) via `broker.py`; maintain an in-memory tick store and build 5s/1m bars from ticks as needed. Market-hours-gated.
+- **strategy** (`app/strategy.py`) — **new, purpose-built intraday** signal functions (price-action: momentum/VWAP/ORB/mean-reversion + ATR stops) → intents `{ticker, side, strength}`. Pure functions so live + backtest share one path. (NOT ported from `stocks`.)
 - **risk** (`app/risk.py`) — MANDATORY gate every intent passes: position-size cap, gross-exposure cap, max open positions, per-trade stop-loss, **max daily drawdown halt**, kill-switch flag. The single chokepoint to money.
 - **order router** (`app/broker.py`) — the only code calling `ib.placeOrder`. Client-generated `orderRef` idempotency key; persist order to Postgres **before** sending; handle fills/cancels.
 - **reconciler** — on every (re)connect and on a timer, diff `ib.reqOpenOrders/reqPositions/reqExecutions` vs Postgres; surface drift; never blind-resend.
@@ -43,8 +43,8 @@ New tables (extend the `stocks` `db.py` cache/config layer): `orders` (`order_re
 
 ## Communication
 - engine ↔ api: **shared Postgres only** (no direct calls).
-- engine ↔ IBKR: TCP via `ib_insync` (`ib.connectAsync('ibgw', 4002, clientId=1)`).
-- engine ↔ FMP: outbound HTTPS (`httpx`).
+- engine ↔ IBKR: TCP via `ib_insync` (`ib.connectAsync('ibgw', 4002, clientId=1)`) — carries **both** real-time ticks and order execution.
+- engine ↔ FMP/massive: optional outbound HTTPS for fundamentals/backtest history only (not the live path).
 - UI ↔ api: nginx reverse-proxies `/api/` (clone of `stocks` `nginx.conf`).
 
 ## Why not a queue / microservices

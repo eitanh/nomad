@@ -9,9 +9,9 @@ Phased so the riskiest operational piece (IBKR gateway/auth) is proven first, an
 
 ## Phase 1 — Paper-trading MVP  *(scope is an open decision — see below)*
 Full loop on the paper account: ingest → signals → risk gate → paper orders → monitoring UI + kill-switch.
-1. Port FMP provider + config + db cache layer.
-2. Port `analysis.ts` → `app/strategy.py` (long/short), small fixed watchlist.
-3. In-memory FMP quote feed, market-hours-aware.
+1. Copy config + db layer; `broker.py` subscribes to IBKR ticks (`reqTickByTickData`) for a small fixed watchlist.
+2. Write `app/strategy.py` — a NEW intraday rule (the chosen one), pure functions.
+3. In-memory tick/bar feed from IBKR, market-hours-aware.
 4. Risk manager: position-size, gross-exposure, max-positions, per-trade stop-loss, **max daily drawdown halt**, kill-switch.
 5. Order router → IBKR paper, `order_ref` idempotency, persist-before-send.
 6. Reconciler on connect + timer.
@@ -19,7 +19,7 @@ Full loop on the paper account: ingest → signals → risk gate → paper order
 - **Exit:** runs unattended multiple sessions; kill-switch flattens within one loop; reconciler shows zero drift; every order traceable in Postgres.
 
 ## Phase 2 — Backtesting
-- Reuse the *same* `strategy.py` driven by historical bars (massive/yahoo/FMP) through a simulated fill+risk harness. Assert paper and backtest produce identical signals on identical inputs.
+- Reuse the *same* `strategy.py` driven by historical bars (IBKR historical, or massive/yahoo) through a simulated fill+risk harness. Assert paper and backtest produce identical signals on identical inputs.
 - Add metrics: Sharpe, max DD, hit rate.
 
 ## Phase 3 — Strategy expansion + tuning
@@ -38,7 +38,9 @@ Full loop on the paper account: ingest → signals → risk gate → paper order
    - (a) Connect + monitor only — gateway up, stream prices, compute/log signals, show in UI, **no auto-orders**. Safest first step.
    - (b) Full auto-paper MVP — the complete loop above (paper money).
    - (c) Semi-auto — engine proposes, human approves each in UI.
-2. **Starting strategy:**
-   - (a) Port `stocks` swing rules as baseline (known-good, backtestable; not truly intraday).
-   - (b) Design a new intraday strategy first.
-   - (c) One trivial rule (e.g. MA crossover) to validate the pipeline end-to-end.
+2. **Which intraday strategy first** (the rules are new regardless — `stocks` rules are NOT ported):
+   - (a) Opening-range breakout (ORB).
+   - (b) VWAP reversion / trend.
+   - (c) Momentum (e.g. rate-of-change + volume).
+   - (d) One trivial rule (MA crossover on 1m bars) purely to validate the pipeline end-to-end first.
+   - …plus the data resolution: trade off raw ticks vs 5s/1m bars built from ticks.

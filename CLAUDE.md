@@ -7,7 +7,8 @@ Owner: Eitan (`eitanherman@gmail.com`). Swing/active trader. Existing `stocks` r
 ## Settled decisions
 - **Broker = Interactive Brokers (IBKR)** — the user already has funds there (NOT Alpaca). Use **`ib_insync`** (Python) talking to a **headless IB Gateway** running in-cluster.
 - **Paper trading first.** The IBKR *paper* account has **no 2FA**, so the gateway runs unattended — use this to validate the whole stack before any real money. Live cutover (later) uses IB Key 2FA + IBC auto-restart.
-- **Signal data = FMP real-time quote.** Verified real-time in the `stocks` app (FMP `/stable/quote` timestamp = now). massive.com is a Polygon whitelabel but **15-min delayed** on the Starter plan → research only, not for live trading signals.
+- **Live data = IBKR real-time TICKS** via `ib_insync` (`reqTickByTickData` / `reqRealTimeBars`), streamed over the **same gateway connection as execution**. FMP has **no tick socket** (REST only) → NOT the live feed. FMP/massive are optional fundamentals/backtest sources only. (Requires IBKR market-data subscriptions; line limits apply.)
+- **Strategy = clean, new INTRADAY rules** (price-action: momentum/VWAP/ORB/mean-reversion + ATR stops). Do **NOT** port the `stocks` `analysis.ts` swing/fundamentals rules — wrong shape for intraday.
 - **Strict isolation from `stocks`** — own everything; a nomad crash/deploy must never affect `stocks`.
 - **Money-safety is non-negotiable** from the first order-placing build: a single risk gate, position/exposure limits, per-trade stop-loss, max-daily-drawdown auto-halt, manual kill-switch, idempotent orders (client `orderRef`), reconciliation on reconnect, engine as a strict singleton.
 
@@ -32,4 +33,4 @@ Owner: Eitan (`eitanherman@gmail.com`). Swing/active trader. Existing `stocks` r
 
 ## Open decisions (resolve before P1 coding)
 1. First-milestone scope — connect+monitor-only vs. full auto-paper MVP vs. semi-auto (human approves each).
-2. Starting strategy — port `stocks` `analysis.ts` swing rules to `app/strategy.py` as a baseline (known-good, backtestable, but swing- not intraday-oriented) vs. design a new intraday strategy (momentum/VWAP/ATR) vs. one trivial rule to validate the pipeline.
+2. Which intraday strategy to build first (the rules are new regardless) — e.g. opening-range breakout, VWAP reversion, momentum — and on what data resolution (raw ticks vs 5s/1m bars built from ticks).
