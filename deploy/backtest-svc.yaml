@@ -1,0 +1,47 @@
+# nomad-backtest — resident in-RAM backtest service. Same image as nomad-api,
+# different entrypoint (app.backtest_service). Loads bars_1m into RAM at startup;
+# /grid runs strategy sweeps in milliseconds. Internal only (ClusterIP).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nomad-backtest
+  namespace: nomad
+  labels: { app: nomad-backtest }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: nomad-backtest }
+  template:
+    metadata:
+      labels: { app: nomad-backtest }
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: nomad-backtest
+          image: nomad-api:latest
+          imagePullPolicy: IfNotPresent
+          command: ["uvicorn", "app.backtest_service:app", "--host", "0.0.0.0", "--port", "8090"]
+          ports:
+            - containerPort: 8090
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: nomad-db, key: DATABASE_URL } }
+          readinessProbe:
+            httpGet: { path: /health, port: 8090 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 12        # allow up to ~2min for the in-RAM load
+          resources:
+            requests: { cpu: "200m", memory: "1Gi" }
+            limits: { cpu: "4", memory: "4Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nomad-backtest
+  namespace: nomad
+spec:
+  selector: { app: nomad-backtest }
+  ports:
+    - port: 8090
+      targetPort: 8090

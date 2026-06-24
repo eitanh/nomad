@@ -1,0 +1,42 @@
+# Backfill 1-minute history for the volatile/liquid universe into bars_1m.
+#   kubectl -n nomad delete job backfill-1m --ignore-not-found
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backfill-1m
+  namespace: nomad
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: backfill
+          image: python:3.12-slim
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -e
+              pip install -q httpx asyncpg tzdata
+              python /app/backfill_1m.py
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: DAYS
+              value: "365"
+            - name: SYMBOLS
+              value: "SOXL,SQQQ,TNA,SPXL,LABU,TECL,FAS,NUGT,UVXY,SOXS,AMD,META,AVGO,NFLX,PLTR,COIN,MSTR,MARA,RIOT,SMCI,MU,AMZN,GOOGL,MSFT,AAPL,ARM,SHOP,SNOW,DELL,INTC,NIO,BABA,CRWD,NOW,UBER"
+            - name: MASSIVE_BASE_URL
+              value: "https://api.massive.com"
+            - name: MASSIVE_API_KEY
+              valueFrom: { secretKeyRef: { name: massive-api, key: MASSIVE_API_KEY } }
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: nomad-db, key: DATABASE_URL } }
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: backfill-1m-script

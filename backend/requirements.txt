@@ -1,0 +1,13 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+pydantic==2.10.4
+pydantic-settings==2.7.1
+asyncpg==0.30.0
+orjson==3.10.12
+psycopg2-binary==2.9.10
+pandas==2.2.3
+numpy==2.2.1
+# IBKR client — maintained community fork of the (now unmaintained) ib_insync.
+# Same API; swap to `ib_insync` here if you ever need the original.
+ib_async==1.0.3

@@ -1,0 +1,43 @@
+# One-off backtest run. Script mounted from the `backtest-script` ConfigMap
+# (created from scripts/backtest_orb.py). Tweak strategy params via env.
+#   kubectl -n nomad delete job backtest --ignore-not-found
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backtest
+  namespace: nomad
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: backtest
+          image: python:3.12-slim
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -e
+              pip install -q asyncpg tzdata
+              python /app/backtest_orb.py
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: SYMBOL
+              value: "NVDA"
+            - name: OR_MIN
+              value: "15"
+            - name: TARGET_R
+              value: "2.0"
+            - name: RISK_USD
+              value: "100"
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: nomad-db, key: DATABASE_URL } }
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: backtest-script

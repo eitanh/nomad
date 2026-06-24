@@ -1,0 +1,42 @@
+# In-memory backtest grid. Script mounted from the `backtest-script` ConfigMap
+# (scripts/backtest.py). Loads bars once, runs the whole strategy grid, prints a
+# ranked leaderboard.  kubectl -n nomad delete job backtest-grid --ignore-not-found
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backtest-grid
+  namespace: nomad
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: backtest
+          image: python:3.12-slim
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -e
+              pip install -q pandas numpy psycopg2-binary
+              python /app/backtest.py
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: TABLE
+              value: "bars_1m"
+            - name: SIZE_USD
+              value: "1000"
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: nomad-db, key: DATABASE_URL } }
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits: { cpu: "4", memory: "3Gi" }
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: backtest-script
