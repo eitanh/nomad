@@ -1,0 +1,58 @@
+# Phase 0 smoke test as an in-cluster Job — connects to ibgw:4002 exactly like
+# the engine will. Asserts a PAPER account (DU…) before any request. Disposable:
+#   kubectl -n nomad delete job ibkr-smoke --ignore-not-found
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ibkr-smoke
+  namespace: nomad
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: smoke
+          image: python:3.12-slim
+          env:
+            - name: IBGW_HOST
+              value: "ibgw"
+            - name: IBGW_PORT
+              value: "4002"
+            - name: IB_CLIENT_ID
+              value: "2"          # engine will use 1; keep the test distinct
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -e
+              pip install -q ib_async==1.0.3
+              python - <<'PY'
+              import asyncio, os
+              from ib_async import IB
+
+              async def main():
+                  ib = IB()
+                  host, port, cid = os.environ["IBGW_HOST"], int(os.environ["IBGW_PORT"]), int(os.environ["IB_CLIENT_ID"])
+                  print(f"-> connecting to {host}:{port} clientId={cid}")
+                  await ib.connectAsync(host, port, clientId=cid, timeout=20)
+
+                  accts = ib.managedAccounts()
+                  print("managed accounts:", accts)
+                  if not accts or not all(a.startswith("DU") for a in accts):
+                      print("NON-PAPER or empty account -> abort"); ib.disconnect(); raise SystemExit(2)
+                  print("OK connected (PAPER)", accts)
+
+                  print("reqCurrentTime:", await ib.reqCurrentTimeAsync())
+                  summary = await ib.accountSummaryAsync()
+                  want = {"NetLiquidation","TotalCashValue","BuyingPower","AvailableFunds"}
+                  for v in summary:
+                      if v.tag in want: print(f"  {v.tag:18} {v.value} {v.currency}")
+                  pos = await ib.reqPositionsAsync()
+                  print(f"reqPositions: {len(pos)} open position(s)")
+                  for p in pos: print(f"  {p.contract.symbol} qty={p.position} avgCost={p.avgCost}")
+                  ib.disconnect()
+                  print("PHASE 0 PASS")
+
+              asyncio.run(main())
+              PY

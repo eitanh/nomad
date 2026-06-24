@@ -1,0 +1,38 @@
+# OPTIONAL local fallback. The primary Phase 0 path is server-first: deploy to
+# skynet1 with scripts/deploy.sh (see deploy/*.yaml). Use this only if you want
+# to iterate without the cluster. NOTE: IBKR allows ONE session per login, so do
+# NOT run this gateway at the same time as the in-cluster ibgw — they'll fight.
+#
+#   1. cp .env.example .env   # fill in your IBKR *paper* creds
+#   2. docker compose up -d
+#   3. cd backend && python -m venv .venv && . .venv/bin/activate \
+#        && pip install -r requirements.txt
+#   4. python ../scripts/check_ibkr.py     # Phase 0 smoke test
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nomad
+      POSTGRES_PASSWORD: nomad
+      POSTGRES_DB: nomad
+    ports:
+      - "5432:5432"
+    volumes:
+      - nomad_pgdata:/var/lib/postgresql/data
+
+  # Headless IB Gateway + IBC, paper mode. Mirrors the in-cluster `ibgw` service.
+  ibgw:
+    image: ghcr.io/gnzsnz/ib-gateway:latest
+    environment:
+      TWS_USERID: ${IB_USERNAME}
+      TWS_PASSWORD: ${IB_PASSWORD}
+      TRADING_MODE: ${TRADING_MODE:-paper}
+      # Phase 0 is connectivity-only: block order placement at the gateway itself.
+      # Flip to "no" in Phase 1 when the order router comes online.
+      READ_ONLY_API: "yes"
+    ports:
+      - "4002:4002"   # paper API (engine connects here)
+      - "5900:5900"   # VNC (debug only; optional)
+
+volumes:
+  nomad_pgdata:

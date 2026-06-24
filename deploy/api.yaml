@@ -1,0 +1,50 @@
+# nomad-api — read-only API + chart UI. Reads Postgres only; the ONLY component
+# exposed publicly (via ingress). Never touches IBKR.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nomad-api
+  namespace: nomad
+  labels: { app: nomad-api }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: nomad-api }
+  template:
+    metadata:
+      labels: { app: nomad-api }
+    spec:
+      # Stop k8s injecting legacy per-Service env vars (e.g. IBGW_PORT=tcp://…),
+      # which collide with pydantic-settings fields like ibgw_port.
+      enableServiceLinks: false
+      containers:
+        - name: nomad-api
+          image: nomad-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: nomad-db, key: DATABASE_URL } }
+          readinessProbe:
+            httpGet: { path: /api/health, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/health, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "25m", memory: "128Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nomad-api
+  namespace: nomad
+spec:
+  selector: { app: nomad-api }
+  ports:
+    - port: 8080
+      targetPort: 8080

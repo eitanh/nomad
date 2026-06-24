@@ -1,0 +1,49 @@
+# Continuous ~5-year 1-minute history (2021-07 .. 2026-06) for the universe, into
+# bars_1m_5y. Needed for per-stock regime switching across bear+bull in one series.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backfill-5y
+  namespace: nomad
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: backfill
+          image: python:3.12-slim
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -e
+              pip install -q httpx asyncpg tzdata
+              python /app/backfill_1m.py
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: TABLE
+              value: "bars_1m_5y"
+            - name: START
+              value: "2021-07-01"
+            - name: END
+              value: "2026-06-20"
+            - name: SYMBOLS
+              value: "SOXL,TNA,SPXL,LABU,TECL,FAS,NUGT,AMD,META,AVGO,NFLX,COIN,MSTR,MARA,RIOT,SMCI,MU,AMZN,GOOGL,MSFT,AAPL,SHOP,SNOW,DELL,INTC,NIO,BABA,CRWD,NOW,UBER,NVDA,TSLA,TQQQ,SPY,ARM,PLTR"
+            - name: MASSIVE_BASE_URL
+              value: "https://api.massive.com"
+            - name: MASSIVE_API_KEY
+              valueFrom: { secretKeyRef: { name: massive-api, key: MASSIVE_API_KEY } }
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: nomad-db, key: DATABASE_URL } }
+          resources:
+            requests: { cpu: "200m", memory: "512Mi" }
+            limits: { cpu: "2", memory: "2Gi" }
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: backfill-1m-script

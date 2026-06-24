@@ -1,0 +1,29 @@
+# Public host via Cloudflare -> origin. cert-manager (letsencrypt-prod) issues a
+# real cert at the origin; Cloudflare runs Full/strict. Both web (HTTP) and
+# websecure (HTTPS) entrypoints answer (CF proxies to origin over HTTP).
+# Only nomad-api is exposed — engine + ibgw stay internal.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nomad
+  namespace: nomad
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: nomad.securegion.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nomad-api
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - nomad.securegion.com
+      secretName: nomad-tls

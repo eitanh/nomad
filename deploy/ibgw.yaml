@@ -1,0 +1,65 @@
+# Headless IB Gateway (+ IBC), PAPER mode. Internal only — ClusterIP, never
+# exposed via Ingress. The engine reaches it at ibgw:4002 over the cluster
+# network; that same connection carries both market data and (later) orders.
+#
+# Strict singleton: IBKR permits only ONE active session per login, so this is
+# replicas:1 + Recreate (never two pods fighting over the session).
+#
+# Phase 0 safety: READ_ONLY_API=yes — the gateway physically rejects order
+# placement. Flip to "no" in Phase 1 when the risk-gated order router is ready.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ibgw
+  namespace: nomad
+  labels: { app: ibgw }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: ibgw }
+  template:
+    metadata:
+      labels: { app: ibgw }
+    spec:
+      containers:
+        - name: ibgw
+          # Derived from gnzsnz/ib-gateway:stable + an xdotool watcher that
+          # auto-dismisses the "Paper Account Notice" dialog the bundled IBC
+          # can't handle (otherwise the API never starts). Built on the node.
+          image: nomad-ibgw:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TWS_USERID
+              valueFrom: { secretKeyRef: { name: ibkr-creds, key: IB_USERNAME } }
+            - name: TWS_PASSWORD
+              valueFrom: { secretKeyRef: { name: ibkr-creds, key: IB_PASSWORD } }
+            - name: TRADING_MODE
+              valueFrom: { secretKeyRef: { name: ibkr-creds, key: TRADING_MODE } }
+            - name: READ_ONLY_API
+              value: "yes"          # Phase 0: block all order placement at the gateway
+            - name: TWS_ACCEPT_INCOMING
+              value: "accept"       # auto-accept API connections (no manual dialog)
+          ports:
+            # gnzsnz image: raw paper API is on 127.0.0.1:4002; a socat relay
+            # exposes it externally on 4004 (live would be 4003). We expose 4004.
+            - containerPort: 4004   # paper API (socat-exposed)
+            - containerPort: 5900   # VNC (debug via port-forward only)
+          resources:
+            requests: { cpu: "100m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ibgw
+  namespace: nomad
+spec:
+  selector: { app: ibgw }
+  ports:
+    - name: api
+      port: 4002          # clients use the clean ibgw:4002 convention…
+      targetPort: 4004    # …relayed to the socat-exposed paper port in the pod
+    - name: vnc
+      port: 5900
+      targetPort: 5900

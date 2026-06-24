@@ -1,0 +1,84 @@
+# Postgres — the single source of truth for all nomad state (orders, fills,
+# positions, pnl, signals, config/kill-switch). Engine writes, api reads.
+# Cloned from the `stocks` pattern: local-path RWO PVC + Recreate.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: nomad
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: nomad
+  labels: { app: postgres }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # single RWO volume
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          # Tuned for analytics over the 26M-row bars_1s (single-user node).
+          args: ["postgres",
+                 "-c", "shared_buffers=2GB",
+                 "-c", "effective_cache_size=6GB",
+                 "-c", "work_mem=512MB",
+                 "-c", "maintenance_work_mem=1GB",
+                 "-c", "max_parallel_workers=8",
+                 "-c", "max_parallel_workers_per_gather=4"]
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: nomad-db
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: dshm                 # parallel workers need real shared memory
+              mountPath: /dev/shm
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "nomad"] }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", "nomad"] }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits: { cpu: "6", memory: "8Gi" }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-data
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: nomad
+spec:
+  selector: { app: postgres }
+  ports:
+    - port: 5432
+      targetPort: 5432

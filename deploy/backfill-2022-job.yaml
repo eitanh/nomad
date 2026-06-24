@@ -1,0 +1,46 @@
+# Adversarial test: download 2022 (bear market) 1-minute history into a SEPARATE
+# table, to check whether the bounce edge survives a down year or was just beta.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backfill-2022
+  namespace: nomad
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: backfill
+          image: python:3.12-slim
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -e
+              pip install -q httpx asyncpg tzdata
+              python /app/backfill_1m.py
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: TABLE
+              value: "bars_1m_2022"
+            - name: START
+              value: "2022-01-01"
+            - name: END
+              value: "2022-12-31"
+            - name: SYMBOLS
+              value: "SOXL,TNA,SPXL,LABU,TECL,FAS,NUGT,AMD,META,AVGO,NFLX,COIN,MSTR,MARA,RIOT,SMCI,MU,AMZN,GOOGL,MSFT,AAPL,SHOP,SNOW,DELL,INTC,NIO,BABA,CRWD,NOW,UBER,NVDA,TSLA,TQQQ,SPY"
+            - name: MASSIVE_BASE_URL
+              value: "https://api.massive.com"
+            - name: MASSIVE_API_KEY
+              valueFrom: { secretKeyRef: { name: massive-api, key: MASSIVE_API_KEY } }
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: nomad-db, key: DATABASE_URL } }
+          volumeMounts:
+            - name: script
+              mountPath: /app
+      volumes:
+        - name: script
+          configMap:
+            name: backfill-1m-script
