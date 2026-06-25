@@ -22,20 +22,26 @@ SLIP = float(os.environ.get("SLIP", "0.0003"))
 HOLD = int(os.environ.get("MAX_HOLD", "300"))
 
 
-def load():
-    # exclude inverse / short-vol ETFs — a long "buy the dip" strategy must not trade
-    # instruments built to fall (they bleed structurally).
+def load_feats():
+    # Per-symbol load + feature build (never hold all rows at once -> avoids OOM on
+    # multi-year data). Excludes inverse/short-vol ETFs — a long "buy the dip" must
+    # not trade instruments built to fall (they bleed structurally).
     con = psycopg2.connect(DB); cur = con.cursor()
-    cur.execute(f"SELECT symbol, ts, high, low, close FROM {TBL} "
-                f"WHERE is_rth AND symbol NOT IN ('SQQQ','SOXS','UVXY') ORDER BY symbol, ts")
-    rows = cur.fetchall(); con.close()
-    df = pd.DataFrame(rows, columns=["symbol", "ts", "high", "low", "close"])
-    for c in ("high", "low", "close"):
-        df[c] = df[c].astype(float)
-    t = pd.to_datetime(df["ts"], utc=True).dt.tz_convert("America/New_York")
-    df["session"] = t.dt.strftime("%Y%m%d").astype(int)   # NY trading day
-    df["month"]   = t.dt.strftime("%Y-%m")
-    return df
+    cur.execute(f"SELECT DISTINCT symbol FROM {TBL} WHERE is_rth "
+                f"AND symbol NOT IN ('SQQQ','SOXS','UVXY') ORDER BY symbol")
+    syms = [r[0] for r in cur.fetchall()]
+    feats = {}
+    for sym in syms:
+        cur.execute(f"SELECT ts, high, low, close FROM {TBL} WHERE symbol=%s AND is_rth ORDER BY ts", (sym,))
+        df = pd.DataFrame(cur.fetchall(), columns=["ts", "high", "low", "close"])
+        for c in ("high", "low", "close"):
+            df[c] = df[c].astype(float)
+        t = pd.to_datetime(df["ts"], utc=True).dt.tz_convert("America/New_York")
+        df["session"] = t.dt.strftime("%Y%m%d").astype(int)   # NY trading day
+        df["month"]   = t.dt.strftime("%Y-%m")
+        feats[sym] = add_features(df.reset_index(drop=True))
+    con.close()
+    return feats
 
 
 def add_features(g):
@@ -119,10 +125,10 @@ def metrics(trades):
 
 
 def main():
-    df = load()
-    feats = {sym: add_features(g.reset_index(drop=True)) for sym, g in df.groupby("symbol")}
+    feats = load_feats()
     strat = build_strategies()
-    print(f"{TBL}: {len(df):,} bars · {len(feats)} symbols · {len(strat)} variants · "
+    nbars = sum(len(g) for g in feats.values())
+    print(f"{TBL}: {nbars:,} bars · {len(feats)} symbols · {len(strat)} variants · "
           f"${SIZE:g}/trade · slip {SLIP*1e4:g}bps · hold {HOLD}\n", flush=True)
 
     rows = []
@@ -150,19 +156,19 @@ def main():
                 for m, p in sim(g, mfn(g), tgt, lstop, hold, short):
                     recs.append((sym, m, p * SIZE))
         bt = pd.DataFrame(recs, columns=["symbol", "month", "usd"])
-        piv = bt.pivot_table(index="symbol", columns="month", values="usd",
-                             aggfunc="sum").fillna(0).round(0).astype(int)
-        piv["YEAR$"] = piv.sum(axis=1)
-        piv["YEAR%"] = (piv["YEAR$"] / SIZE * 100).round(1)
-        piv = piv.sort_values("YEAR$", ascending=False)
-        pd.set_option("display.width", 400); pd.set_option("display.max_columns", 50)
-        print(f"\n=== BEST: {name} — $ per stock per month (${SIZE:g} each) ===")
-        print(piv.to_string())
-        for sym in piv.index:                    # clean per-stock lines (easy to parse)
-            print(f"PS {sym} {int(piv.loc[sym,'YEAR$'])} {piv.loc[sym,'YEAR%']}")
-        n = len(piv); net = int(piv["YEAR$"].sum())
-        print(f"\nPORTFOLIO: {n} stocks x ${SIZE:g} = ${n*SIZE:,.0f} deployed → "
-              f"net ${net:,} ({net/(n*SIZE)*100:.1f}%)")
+        bt["year"] = bt["month"].str[:4]
+        nst = bt["symbol"].nunique()
+        print(f"\n=== {name} — net $/month (all stocks, ${SIZE:g} each) ===")
+        cum = 0.0
+        for m, v in bt.groupby("month")["usd"].sum().items():
+            cum += v
+            print(f"  MN {m}  {v:+8.0f}   cum {cum:+10.0f}")
+        print("\n=== per year ===")
+        for y, grp in bt.groupby("year"):
+            ny = grp["symbol"].nunique(); net = grp["usd"].sum()
+            print(f"  YR {y}  {ny} stocks  ${ny*SIZE:,.0f} in  net ${net:+,.0f}  ({net/(ny*SIZE)*100:+.1f}%)")
+        net = bt["usd"].sum()
+        print(f"\nTOTAL {bt['year'].nunique()} yrs · {nst} stocks · {len(recs):,} trades · net ${net:+,.0f}")
 
 
 if __name__ == "__main__":
